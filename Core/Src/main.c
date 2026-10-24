@@ -18,12 +18,13 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
 #include "app.h"
 #include "key.h"
+#include "led.h"
 #include <stdio.h>
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -96,7 +97,7 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-Refresh_Display(); // 
+Refresh_Display();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -106,32 +107,49 @@ Refresh_Display(); //
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-  }uint8_t key = Key_Scan();
+  }    uint8_t key = Key_Scan();
 
-if (key != 0)
-{
-    if (sys_state == MENU_MAIN)
+    if (key != 0)
     {
-        if (key == 1)      { menu_cursor = (menu_cursor + 3) % MENU_ITEMS; Refresh_Display(); }
-        else if (key == 2) { menu_cursor = (menu_cursor + 1) % MENU_ITEMS; Refresh_Display(); }
-        else if (key == 3)
+        if (sys_state == MENU_MAIN)
         {
-            switch (menu_cursor)
+            if (key == 1)      { menu_cursor = (menu_cursor + 3) % MENU_ITEMS; Refresh_Display(); }
+            else if (key == 2) { menu_cursor = (menu_cursor + 1) % MENU_ITEMS; Refresh_Display(); }
+            else if (key == 3)
             {
-                case 0: sys_state = MENU_LED;  break;
-                case 1: sys_state = MENU_INFO; break;
-                case 2: sys_state = MODE_LINE; break;
-                case 3: sys_state = MENU_EXT;  break;
+                switch (menu_cursor)
+                {
+                    case 0: sys_state = MENU_LED;  break;
+                    case 1: sys_state = MENU_INFO; break;
+                    case 2: sys_state = MODE_LINE; break;
+                    case 3: sys_state = MENU_EXT;  break;
+                }
+                Refresh_Display();
+                if (sys_state == MENU_LED)
+                    LED_Display_Status();
             }
-            Refresh_Display();
+        }
+        else if (sys_state == MENU_LED) 
+        {
+            if (key == 1)      LED_Toggle_All();
+            else if (key == 2) LED_Start_Blink();
+            else if (key == 4)
+            {
+                LED_Force_Off();
+                sys_state = MENU_MAIN;
+                Refresh_Display();
+            }
+        }
+        else
+        {
+            if (key == 4)
+            {
+                sys_state = MENU_MAIN;
+                Refresh_Display();
+            }
         }
     }
-    else if (key == 4)
-    {
-        sys_state = MENU_MAIN;
-        Refresh_Display();
-    }
-}
+    LED_Task();
   /* USER CODE END 3 */
 }
 

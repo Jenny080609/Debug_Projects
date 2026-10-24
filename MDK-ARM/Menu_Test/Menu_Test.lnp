@@ -1,10 +1,11 @@
 --cpu Cortex-M3
 "menu_test\startup_stm32f103xb.o"
+"menu_test\app.o"
+"menu_test\key.o"
 "menu_test\main.o"
 "menu_test\stm32f1xx_it.o"
 "menu_test\stm32f1xx_hal_msp.o"
-"menu_test\app.o"
-"menu_test\key.o"
+"menu_test\led.o"
 "menu_test\stm32f1xx_hal_gpio_ex.o"
 "menu_test\stm32f1xx_hal_uart.o"
 "menu_test\stm32f1xx_hal.o"

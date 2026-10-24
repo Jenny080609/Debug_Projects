@@ -395,6 +395,16 @@
           <GroupName>Application/User/Core</GroupName>
           <Files>
             <File>
+              <FileName>app.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\app.c</FilePath>
+            </File>
+            <File>
+              <FileName>key.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\key.c</FilePath>
+            </File>
+            <File>
               <FileName>main.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/main.c</FilePath>
@@ -410,14 +420,9 @@
               <FilePath>../Core/Src/stm32f1xx_hal_msp.c</FilePath>
             </File>
             <File>
-              <FileName>app.c</FileName>
+              <FileName>led.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\Core\Src\app.c</FilePath>
-            </File>
-            <File>
-              <FileName>key.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\Src\key.c</FilePath>
+              <FilePath>..\Core\Src\led.c</FilePath>
             </File>
           </Files>
         </Group>

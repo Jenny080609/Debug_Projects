@@ -18,13 +18,13 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
 #include "app.h"
 #include "key.h"
 #include "led.h"
+#include "oled.h"
 #include <stdio.h>
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
-
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -59,10 +59,14 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/**
+  * @brief printf 重定向：所有 printf 输出通过 USART1 发送
+  * @note  Keil 需勾选 Use MicroLIB
+  */
 int fputc(int ch, FILE *f)
 {
-    HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
-    return ch;
+  HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+  return ch;
 }
 /* USER CODE END 0 */
 
@@ -72,9 +76,8 @@ int fputc(int ch, FILE *f)
   */
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
-
+  uint8_t key;                  /* 本周期扫描到的按键值，0 表示没按键 */
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -97,7 +100,8 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-Refresh_Display();
+  OLED_Init();                  /* OLED 初始化：软件 I2C，PB6=SCL，PB7=SDA */
+  Refresh_Display();            /* 上电先显示主菜单 */
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -107,50 +111,75 @@ Refresh_Display();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-  }    uint8_t key = Key_Scan();
+    key = Key_Scan();                      /* 1. 扫描按键（内部 20ms 消抖）*/
 
-    if (key != 0)
+    if (key != 0)                          /* 2. 有按键才处理 */
     {
-        if (sys_state == MENU_MAIN)
+      if (sys_state == MENU_MAIN)
+      {
+        /* ---------- 主菜单：移动光标或进入子菜单 ---------- */
+        if (key == 1)                       /* 按键1：光标上移（0 的上一个是 3）*/
         {
-            if (key == 1)      { menu_cursor = (menu_cursor + 3) % MENU_ITEMS; Refresh_Display(); }
-            else if (key == 2) { menu_cursor = (menu_cursor + 1) % MENU_ITEMS; Refresh_Display(); }
-            else if (key == 3)
-            {
-                switch (menu_cursor)
-                {
-                    case 0: sys_state = MENU_LED;  break;
-                    case 1: sys_state = MENU_INFO; break;
-                    case 2: sys_state = MODE_LINE; break;
-                    case 3: sys_state = MENU_EXT;  break;
-                }
-                Refresh_Display();
-                if (sys_state == MENU_LED)
-                    LED_Display_Status();
-            }
+          menu_cursor = (menu_cursor + MENU_ITEMS - 1) % MENU_ITEMS;
+          Refresh_Display();
         }
-        else if (sys_state == MENU_LED) 
+        else if (key == 2)                  /* 按键2：光标下移（3 的下一个是 0）*/
         {
-            if (key == 1)      LED_Toggle_All();
-            else if (key == 2) LED_Start_Blink();
-            else if (key == 4)
-            {
-                LED_Force_Off();
-                sys_state = MENU_MAIN;
-                Refresh_Display();
-            }
+          menu_cursor = (menu_cursor + 1) % MENU_ITEMS;
+          Refresh_Display();
         }
-        else
+        else if (key == 3)                  /* 按键3：进入光标选中的子菜单 */
         {
-            if (key == 4)
-            {
-                sys_state = MENU_MAIN;
-                Refresh_Display();
-            }
+          switch (menu_cursor)
+          {
+            case 0: sys_state = MENU_LED;  break;
+            case 1: sys_state = MENU_INFO; break;
+            case 2: sys_state = MODE_LINE; break;
+            case 3: sys_state = MENU_EXT;  break;
+            default: sys_state = MENU_MAIN; break;
+          }
+          Refresh_Display();
+
+          /* 进入 LED 界面时，额外打印一次当前 LED 状态到串口 */
+          if (sys_state == MENU_LED)
+          {
+            LED_Display_Status();
+          }
         }
+      }
+      else if (sys_state == MENU_LED)
+      {
+        /* ---------- LED 子菜单 ---------- */
+        if (key == 1)
+        {
+          LED_Toggle_All();                 /* 常亮 / 常灭切换，并打断闪烁 */
+        }
+        else if (key == 2)
+        {
+          LED_Start_Blink();                /* 开始交替闪烁，重新计时 30 秒 */
+        }
+        else if (key == 4)
+        {
+          LED_Force_Off();                  /* 关灯、清除闪烁状态 */
+          sys_state = MENU_MAIN;
+          Refresh_Display();
+        }
+      }
+      else
+      {
+        /* ---------- 其它子菜单：只响应返回键 ---------- */
+        if (key == 4)
+        {
+          sys_state = MENU_MAIN;
+          Refresh_Display();
+        }
+      }
     }
+
+    /* 3. LED 闪烁计时任务：每个循环都调用，内部非阻塞 */
     LED_Task();
-  /* USER CODE END 3 */
+    /* USER CODE END 3 */
+  }
 }
 
 /**
@@ -238,17 +267,34 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
-  /*Configure GPIO pins : PA0 PA1 PA2 PA3 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin : LED_Pin */
+  GPIO_InitStruct.Pin = LED_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+  /* PA5：LED2，推挽输出，初始高电平（灭） */
+  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+
+  /* PA0~PA3：四个按键，输入 + 内部上拉（按下为低电平） */
+  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-
   /* USER CODE END MX_GPIO_Init_2 */
 }
 

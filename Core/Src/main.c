@@ -78,6 +78,7 @@ int main(void)
 {
   /* USER CODE BEGIN 1 */
   uint8_t key;                  /* 本周期扫描到的按键值，0 表示没按键 */
+  uint32_t led_ui_tick = 0;     /* LED 状态界面上次刷新时间 */
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -138,13 +139,7 @@ int main(void)
             case 3: sys_state = MENU_EXT;  break;
             default: sys_state = MENU_MAIN; break;
           }
-          Refresh_Display();
-
-          /* 进入 LED 界面时，额外打印一次当前 LED 状态到串口 */
-          if (sys_state == MENU_LED)
-          {
-            LED_Display_Status();
-          }
+          Refresh_Display();        /* LED 子菜单的 Refresh_Display 内部会显示状态 */
         }
       }
       else if (sys_state == MENU_LED)
@@ -178,6 +173,14 @@ int main(void)
 
     /* 3. LED 闪烁计时任务：每个循环都调用，内部非阻塞 */
     LED_Task();
+
+    /* 4. LED 子菜单：按键后立即刷新，闪烁期间每 200ms 刷新一次 */
+    if (sys_state == MENU_LED &&
+        (key != 0 || (HAL_GetTick() - led_ui_tick) >= 200))
+    {
+      led_ui_tick = HAL_GetTick();
+      Refresh_LED_Status();
+    }
     /* USER CODE END 3 */
   }
 }

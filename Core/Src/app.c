@@ -1,5 +1,6 @@
 #include "app.h"
 #include "oled.h"
+#include "led.h"
 
 /* ================= 全局变量定义 ================= */
 System_State_t sys_state   = MENU_MAIN;   /* 上电默认进入主菜单 */
@@ -30,7 +31,37 @@ static const char *Get_State_Name(System_State_t state)
     }
 }
 
-/* ================= OLED 刷新界面（替代原来的串口打印） ================= */
+/* ================= LED 子菜单实时状态显示 =================
+ * 用固定宽度字符串，避免覆盖时残留旧字符
+ * 每行最多 21 个字符（128 / 6）
+ * ========================================================== */
+void Refresh_LED_Status(void)
+{
+    LED_Status_t st;
+    char line[24];
+
+    if (sys_state != MENU_LED)
+        return;
+
+    LED_GetStatus(&st);
+
+    /* 第 4 页：两个 LED 的亮灭状态，如 "LED1:ON  LED2:OFF" */
+    sprintf(line, "LED1:%-3s LED2:%-3s",
+            st.led1_on ? "ON" : "OFF",
+            st.led2_on ? "ON" : "OFF");
+    OLED_ShowString(0, 4, line);
+
+    /* 第 6 页：模式 / 闪烁剩余秒数 */
+    if (st.mode == LED_MODE_BLINK)
+        sprintf(line, "BLINK LEFT:%2lus ", (unsigned long)st.remain_sec);
+    else if (st.mode == LED_MODE_ON)
+        sprintf(line, "MODE: ON       ");
+    else
+        sprintf(line, "MODE: OFF      ");
+    OLED_ShowString(0, 6, line);
+}
+
+/* ================= OLED 刷新界面 ================= */
 void Refresh_Display(void)
 {
     uint8_t i;
@@ -56,9 +87,17 @@ void Refresh_Display(void)
         /* 第 7 页：操作提示 */
         OLED_ShowString(0, 7, "1/2 Move 3 OK");
     }
+    else if (sys_state == MENU_LED)
+    {
+        /* LED 子菜单：标题 + 操作提示 + 实时状态 */
+        OLED_ShowString(0, 0, "==== LED ====");
+        OLED_ShowString(0, 1, "1:ON/OFF 2:BLINK");
+        OLED_ShowString(0, 2, "4:Back");
+        Refresh_LED_Status();          /* 立即显示当前 LED 状态 */
+    }
     else
     {
-        /* 子菜单：标题 + 子菜单名称 + 返回提示 */
+        /* 其它子菜单：标题 + 子菜单名称 + 返回提示 */
         OLED_ShowString(0, 0, "==== SUBMENU ====");
         OLED_ShowString(0, 2, Get_State_Name(sys_state));
         OLED_ShowString(0, 4, "4: Back to Menu");

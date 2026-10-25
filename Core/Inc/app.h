@@ -24,7 +24,10 @@ extern System_State_t  sys_state;      /* 当前状态（定义在 app.c） */
 extern uint8_t         menu_cursor;    /* 光标位置 0~3（定义在 app.c） */
 extern const char     *menu_names[MENU_ITEMS];  /* 四个菜单项名称 */
 
-/* 用串口打印当前界面，替代 OLED 刷新 */
+/* 重画整个界面（切换菜单时调用） */
 void Refresh_Display(void);
+
+/* 只刷新 LED 子菜单的实时状态（闪烁时周期调用） */
+void Refresh_LED_Status(void);
 
 #endif

@@ -22,38 +22,30 @@ static uint32_t blink_last_toggle = 0;   /* 上次翻转的时间     */
 static void LED_Write(uint8_t on1, uint8_t on2)
 {
     /* 亮 → 输出低电平(RESET)；灭 → 输出高电平(SET) */
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, on1 ? GPIO_PIN_RESET : GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, on2 ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, on1 ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, on2 ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
 /* ==================================================================
- * 串口打印当前状态（模拟 OLED）
+ * 获取当前 LED 状态（给 OLED 显示用，不打印）
  * ================================================================== */
-void LED_Display_Status(void)
+void LED_GetStatus(LED_Status_t *status)
 {
+    if (status == NULL)
+        return;
+
+    status->mode    = led_mode;
+    status->led1_on = led1_on;
+    status->led2_on = led2_on;
+    status->remain_sec = 0;
+
+    /* 闪烁模式下算出剩余秒数（向上取整） */
     if (led_mode == LED_MODE_BLINK)
     {
-        /* 算剩余秒数：(总时长 - 已过时间 + 999) / 1000 向上取整 */
         uint32_t elapsed = HAL_GetTick() - blink_start_tick;
-        uint32_t remain_sec;
 
-        if (elapsed >= LED_BLINK_DURATION_MS)
-            remain_sec = 0;
-        else
-            remain_sec = (LED_BLINK_DURATION_MS - elapsed + 999) / 1000;
-
-        printf("状态: 交替闪烁中 (剩余 %lu 秒) | LED1: %s, LED2: %s\r\n",
-               (unsigned long)remain_sec,
-               led1_on ? "ON" : "OFF",
-               led2_on ? "ON" : "OFF");
-    }
-    else if (led_mode == LED_MODE_ON)
-    {
-        printf("状态: 常亮 | LED1: ON, LED2: ON\r\n");
-    }
-    else
-    {
-        printf("状态: 常灭 | LED1: OFF, LED2: OFF\r\n");
+        if (elapsed < LED_BLINK_DURATION_MS)
+            status->remain_sec = (LED_BLINK_DURATION_MS - elapsed + 999) / 1000;
     }
 }
 
@@ -89,8 +81,6 @@ void LED_Toggle_All(void)
         led2_on = 0;
     }
     LED_Write(led1_on, led2_on);
-
-    LED_Display_Status();   /* 状态改变，立即打印 */
 }
 
 /* ==================================================================
@@ -105,12 +95,10 @@ void LED_Start_Blink(void)
     blink_start_tick  = now;      /* 记录开始时间，用于判断 30 秒到期 */
     blink_last_toggle = now;      /* 记录上次翻转时间，用于 500ms 间隔 */
 
-    /* 起始状态：LED1 亮、LED2 灭 */
+    /* 起始状态：LED1 亮、LED2 灭，保证不会同时亮或同时灭 */
     led1_on = 1;
     led2_on = 0;
     LED_Write(led1_on, led2_on);
-
-    LED_Display_Status();         /* 状态改变，立即打印 */
 }
 
 /* ==================================================================
@@ -146,11 +134,10 @@ void LED_Task(void)
         led1_on  = 0;
         led2_on  = 0;
         LED_Write(0, 0);
-        LED_Display_Status();     /* 状态改变，打印一次 */
         return;
     }
 
-    /* 2. 每满 500ms 翻转一次 */
+    /* 2. 每满 500ms 翻转一次，两个 LED 状态始终相反 */
     if ((now - blink_last_toggle) >= LED_BLINK_INTERVAL_MS)
     {
         blink_last_toggle = now;  /* 记录本次翻转时间 */
@@ -158,7 +145,5 @@ void LED_Task(void)
         led1_on = !led1_on;
         led2_on = !led2_on;
         LED_Write(led1_on, led2_on);
-
-        LED_Display_Status();     /* 每次翻转都打印最新状态 */
     }
 }

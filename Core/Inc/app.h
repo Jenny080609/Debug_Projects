@@ -24,6 +24,9 @@ extern System_State_t  sys_state;      /* 当前状态（定义在 app.c） */
 extern uint8_t         menu_cursor;    /* 光标位置 0~3（定义在 app.c） */
 extern const char     *menu_names[MENU_ITEMS];  /* 四个菜单项名称 */
 
+/* ---------------- 信息显示用的变量 ---------------- */
+extern volatile int var_a;                      /* 全局变量 a，上电初始值 0 */
+
 /* 重画整个界面（切换菜单时调用） */
 void Refresh_Display(void);
 

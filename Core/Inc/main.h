@@ -66,6 +66,5 @@ void Error_Handler(void);
 #ifdef __cplusplus
 }
 #endif
-#define LED_Pin GPIO_PIN_4
-#define LED_GPIO_Port GPIOA
+
 #endif /* __MAIN_H */

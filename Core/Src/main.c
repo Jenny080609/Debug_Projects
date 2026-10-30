@@ -18,12 +18,14 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "app.h"
 #include "key.h"
 #include "led.h"
 #include "oled.h"
+#include "uart.h"
 #include <stdio.h>
 /* USER CODE END Includes */
 
@@ -76,6 +78,7 @@ int fputc(int ch, FILE *f)
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
   uint8_t key;                  /* 本周期扫描到的按键值，0 表示没按键 */
   uint32_t led_ui_tick = 0;     /* LED 状态界面上次刷新时间 */
@@ -103,6 +106,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
   OLED_Init();                  /* OLED 初始化：软件 I2C，PB6=SCL，PB7=SDA */
   Refresh_Display();            /* 上电先显示主菜单 */
+  UART_Start();                 /* 启动第一次串口接收中断 */
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -112,6 +116,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+		printf("Waiting...\r\n");
+		HAL_Delay(500);
     key = Key_Scan();                      /* 1. 扫描按键（内部 20ms 消抖）*/
 
     if (key != 0)                          /* 2. 有按键才处理 */
@@ -171,19 +177,34 @@ int main(void)
       }
     }
 
-    /* 3. LED 闪烁计时任务：每个循环都调用，内部非阻塞 */
+    /* 3. 串口任务："111" 修改 var_a，"GET A" 返回 var_a */
+    UART_Task();
+
+    /* 4. var_a 被修改且正在信息界面时，刷新屏幕 */
+    if (uart_refresh_flag)
+    {
+      uart_refresh_flag = 0;
+      if (sys_state == MENU_INFO)
+      {
+        Refresh_Display();
+      }
+    }
+
+    /* 5. LED 闪烁计时任务：每个循环都调用，内部非阻塞 */
     LED_Task();
 
-    /* 4. LED 子菜单：按键后立即刷新，闪烁期间每 200ms 刷新一次 */
+    /* 6. LED 子菜单：按键后立即刷新，闪烁期间每 200ms 刷新一次 */
     if (sys_state == MENU_LED &&
         (key != 0 || (HAL_GetTick() - led_ui_tick) >= 200))
     {
       led_ui_tick = HAL_GetTick();
       Refresh_LED_Status();
     }
-    /* USER CODE END 3 */
-  }
-}
+		
+		HAL_Delay(5);
+  /* USER CODE END 3 */
+  }      /* 关闭 while (1) */
+}        /* 关闭 main() */
 
 /**
   * @brief System Clock Configuration
@@ -270,19 +291,35 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4|GPIO_PIN_5, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : LED_Pin */
-  GPIO_InitStruct.Pin = LED_Pin;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6|GPIO_PIN_7, GPIO_PIN_SET);
+
+  /*Configure GPIO pins : PA0 PA1 PA2 PA3 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PA4 PA5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PB6 PB7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
   /* PA5：LED2，推挽输出，初始高电平（灭） */

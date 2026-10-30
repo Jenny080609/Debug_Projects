@@ -2,9 +2,14 @@
 #include "oled.h"
 #include "led.h"
 
+/* ================= 个人信息（改成你自己的） ================= */
+#define STUDENT_NAME  "NieJiaying"       /* 姓名拼音 */
+#define STUDENT_ID    "32602143"     /* 学号     */
+
 /* ================= 全局变量定义 ================= */
 System_State_t sys_state   = MENU_MAIN;   /* 上电默认进入主菜单 */
 uint8_t        menu_cursor = 0;           /* 光标默认在第 0 行   */
+volatile int            var_a       = 0;           /* 变量 a，上电初始值为 0 */
 
 /*
  * 四个菜单项，顺序必须和 menu_cursor 的 0~3 对应。
@@ -94,6 +99,22 @@ void Refresh_Display(void)
         OLED_ShowString(0, 1, "1:ON/OFF 2:BLINK");
         OLED_ShowString(0, 2, "4:Back");
         Refresh_LED_Status();          /* 立即显示当前 LED 状态 */
+    }
+    else if (sys_state == MENU_INFO)
+    {
+        char buf[24];
+
+        /* 信息显示子菜单：标题 + 三行信息 */
+        OLED_ShowString(0, 0, "==== INFO ====");
+
+        OLED_ShowString(0, 2, "Name: " STUDENT_NAME);
+        OLED_ShowString(0, 3, "ID: " STUDENT_ID);
+
+        /* 用 sprintf 把变量 a 的数字转成字符串，再显示 */
+        sprintf(buf, "Var a: %d", var_a);
+        OLED_ShowString(0, 4, buf);
+
+        OLED_ShowString(0, 7, "4:Back");
     }
     else
     {

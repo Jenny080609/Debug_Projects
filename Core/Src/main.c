@@ -116,8 +116,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-		printf("Waiting...\r\n");
-		HAL_Delay(500);
+		
     key = Key_Scan();                      /* 1. 扫描按键（内部 20ms 消抖）*/
 
     if (key != 0)                          /* 2. 有按键才处理 */

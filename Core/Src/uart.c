@@ -11,7 +11,7 @@ volatile uint8_t uart_refresh_flag = 0;    /* var_a 改变后置 1       */
 
 static volatile uint8_t rx_len = 0;        /* 当前已收到多少个字符   */
 static uint8_t rx_byte;                    /* 中断接收用的单字节临时变量 */
-
+static volatile uint32_t rx_last_tick = 0;   /* 最后一个字节到达的时刻 */
 /* ==================================================================
  * 启动第一次接收中断
  * 之后每收到一个字节，HAL 会自动进入 HAL_UART_RxCpltCallback
@@ -52,6 +52,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             /* 普通字符：存入缓冲区 */
             rx_buf[rx_len++] = (char)rx_byte;
         }
+				rx_last_tick = HAL_GetTick();
 
         /* 重新开启接收，等待下一个字节（必须写，否则只收一个字节） */
         HAL_UART_Receive_IT(&huart1, &rx_byte, 1);
@@ -66,8 +67,19 @@ void UART_Task(void)
 {
     int value;
 
-    if (rx_flag == 0)
-        return;                 /* 还没收到完整一行 */
+   if (rx_flag == 0)
+{
+    /* 没有换行符：100ms 内没有新字符，就认为这一条命令发完了 */
+    if (rx_len > 0 && (HAL_GetTick() - rx_last_tick) >= 100)
+    {
+        rx_buf[rx_len] = '\0';
+        rx_flag = 1;
+    }
+    else
+    {
+        return;
+    }
+}
 
     rx_flag = 0;
 		printf("---收到指令：[%s]\r\n",rx_buf);

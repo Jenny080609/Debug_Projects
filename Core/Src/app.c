@@ -116,6 +116,14 @@ void Refresh_Display(void)
 
         OLED_ShowString(0, 7, "4:Back");
     }
+    else if (sys_state == MODE_LINE)
+    {
+        /* 巡线界面：未启动时的初始画面，运行后由 main.c 每 100ms 刷新 */
+        OLED_ShowString(0, 0, "==== LINE ====");
+        OLED_ShowString(0, 1, "1:Start 4:Back");
+        OLED_ShowString(0, 2, "Sensor Status:");
+        OLED_ShowString(0, 7, "4:Back");
+    }
     else
     {
         /* 其它子菜单：标题 + 子菜单名称 + 返回提示 */

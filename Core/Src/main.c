@@ -26,6 +26,9 @@
 #include "led.h"
 #include "oled.h"
 #include "uart.h"
+#include "line.h"
+#include "motor.h"
+#include "beep.h"
 #include <stdio.h>
 /* USER CODE END Includes */
 
@@ -45,6 +48,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+TIM_HandleTypeDef htim3;
+
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
@@ -55,6 +60,7 @@ UART_HandleTypeDef huart1;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -70,6 +76,21 @@ int fputc(int ch, FILE *f)
   HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
   return ch;
 }
+
+/* ================= 巡线全局状态 ================= */
+uint8_t  line_running     = 0;   /* 0=停车，1=跑圈中 */
+uint32_t line_start_tick  = 0;   /* 发车时刻（HAL_GetTick） */
+uint32_t line_sample_tick = 0;   /* 10ms 采样计时 */
+uint32_t line_ui_tick     = 0;   /* 100ms 显示计时 */
+uint32_t line_lost_tick   = 0;   /* 脱线（全白）起始时刻，0 表示在线 */
+float    last_time        = 0.0f;/* 本圈用时（秒，保留 1 位小数） */
+uint8_t  line_black_cnt   = 0;   /* 全黑连续采样次数（消抖用） */
+
+/* 上一次动作：脱线（全白）时沿用，给小车"找线"的机会 */
+#define LINE_ACT_FORWARD  0
+#define LINE_ACT_LEFT     1
+#define LINE_ACT_RIGHT    2
+uint8_t  last_error_action = LINE_ACT_FORWARD;
 /* USER CODE END 0 */
 
 /**
@@ -82,6 +103,7 @@ int main(void)
   /* USER CODE BEGIN 1 */
   uint8_t key;                  /* 本周期扫描到的按键值，0 表示没按键 */
   uint32_t led_ui_tick = 0;     /* LED 状态界面上次刷新时间 */
+  char line_spaced[12];         /* "1 1 0 1 1" 格式的传感器状态 */
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -103,16 +125,23 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
   OLED_Init();                  /* OLED 初始化：软件 I2C，PB6=SCL，PB7=SDA */
   Refresh_Display();            /* 上电先显示主菜单 */
   UART_Start();                 /* 启动第一次串口接收中断 */
+	
+	LED_Force_Off();
+  Motor_Init();                 /* 电机方向引脚 + TIM3 双路 PWM */
+  Beep_Init();                  /* 蜂鸣器 PB8 */
+  Line_Init();                  /* 5 路传感器 + 关闭 JTAG（PB3/PB4）*/
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -140,7 +169,8 @@ int main(void)
           {
             case 0: sys_state = MENU_LED;  break;
             case 1: sys_state = MENU_INFO; break;
-            case 2: sys_state = MODE_LINE; break;
+            case 2: Motor_Stop();          /* 进巡线界面先确保电机停转 */
+                    sys_state = MODE_LINE; break;
             case 3: sys_state = MENU_EXT;  break;
             default: sys_state = MENU_MAIN; break;
           }
@@ -161,6 +191,37 @@ int main(void)
         else if (key == 4)
         {
           LED_Force_Off();                  /* 关灯、清除闪烁状态 */
+          sys_state = MENU_MAIN;
+          Refresh_Display();
+        }
+      }
+      else if (sys_state == MODE_LINE)
+      {
+        /* ---------- 巡线子菜单 ---------- */
+        if (key == 1 && line_running == 0)      /* 按键1：开始巡线 */
+        {
+          Beep_Once();                          /* 先响一声，约 100ms */
+          line_running      = 1;
+          line_start_tick   = HAL_GetTick();    /* 发车瞬间开始计时 */
+          line_sample_tick  = HAL_GetTick();
+          line_ui_tick      = 0;                /* 立即刷新界面 */
+          line_black_cnt    = 0;
+          line_lost_tick    = 0;                /* 清除脱线状态 */
+          last_error_action = LINE_ACT_FORWARD; /* 起步默认直行 */
+          last_time         = 0.0f;             /* 清空上一圈成绩 */
+          printf("LINE START\r\n");
+        }
+        else if (key == 4)                      /* 按键4：强制停车并退出 */
+        {
+          Motor_Stop();
+
+          if (line_running)                     /* 中途手动停止，记录已用时 */
+          {
+            last_time = (HAL_GetTick() - line_start_tick) / 1000.0f;
+            printf("LINE ABORT: %.1f s\r\n", last_time);
+          }
+
+          line_running = 0;
           sys_state = MENU_MAIN;
           Refresh_Display();
         }
@@ -200,11 +261,134 @@ int main(void)
       Refresh_LED_Status();
     }
 		
-		HAL_Delay(5);
-  /* USER CODE END 3 */
-  }      /* 关闭 while (1) */
-}        /* 关闭 main() */
+    /* 7. 巡线任务：10ms 采样控制，100ms 刷新显示 */
+    if (sys_state == MODE_LINE)
+    {
+      /* --- 10ms：读传感器并控制电机 --- */
+      if (line_running && (HAL_GetTick() - line_sample_tick) >= 10)
+      {
+        const char *s;
+        uint8_t left, right, mid;
 
+        line_sample_tick = HAL_GetTick();
+        s = Line_ReadSensors();
+
+        /* --- 判圈：连续 5 次全黑（约 50ms）+ 已跑 ≥3 秒 --- */
+        if (Line_IsAllBlack())
+        {
+          if (line_black_cnt < 5) line_black_cnt++;
+        }
+        else
+        {
+          line_black_cnt = 0;
+        }
+
+        if (line_black_cnt >= 5 &&
+            (HAL_GetTick() - line_start_tick) >= 3000)
+        {
+          Motor_Stop();                              /* 自动停车 */
+          last_time = (HAL_GetTick() - line_start_tick) / 1000.0f;
+          line_running = 0;
+          line_black_cnt = 0;
+          line_lost_tick = 0;
+          line_ui_tick = 0;                          /* 立即刷新最终画面 */
+          printf("LAP DONE: %.1f s\r\n", last_time);
+        }
+        else
+        {
+          left  = (s[0] == '0' || s[1] == '0');
+          right = (s[3] == '0' || s[4] == '0');
+          mid   = (s[2] == '0');
+
+          if (left && right)                    /* 宽线 / 两侧都压：居中直行 */
+          {
+            Motor_Forward();
+            last_error_action = LINE_ACT_FORWARD;
+            line_lost_tick = 0;
+          }
+          else if (left)                        /* 左侧压线：急左转 */
+          {
+            Motor_TurnLeft();
+            last_error_action = LINE_ACT_LEFT;
+            line_lost_tick = 0;
+          }
+          else if (right)                       /* 右侧压线：急右转 */
+          {
+            Motor_TurnRight();
+            last_error_action = LINE_ACT_RIGHT;
+            line_lost_tick = 0;
+          }
+          else if (mid)                         /* 中间压线：直行 */
+          {
+            Motor_Forward();
+            last_error_action = LINE_ACT_FORWARD;
+            line_lost_tick = 0;
+          }
+          else                                  /* 全白：脱线找线，绝不停车 */
+          {
+            if (line_lost_tick == 0) line_lost_tick = HAL_GetTick();
+
+            if ((HAL_GetTick() - line_lost_tick) <= 300)
+            {
+              /* 300ms 内：保持上一次的转向继续找线 */
+              if (last_error_action == LINE_ACT_LEFT)       Motor_TurnLeft();
+              else if (last_error_action == LINE_ACT_RIGHT) Motor_TurnRight();
+              else                                          Motor_Forward();
+            }
+            else
+            {
+              /* 超过 300ms 仍无线：改直行继续找，仍然不停车 */
+              Motor_Forward();
+              last_error_action = LINE_ACT_FORWARD;
+            }
+          }
+        }
+      }
+
+      /* --- 100ms：刷新 OLED 和串口 --- */
+      if ((HAL_GetTick() - line_ui_tick) >= 100)
+      {
+        const char *s;
+        char buf[24];
+
+        line_ui_tick = HAL_GetTick();
+        s = Line_ReadSensors();
+
+        sprintf(line_spaced, "%c %c %c %c %c",
+                s[0], s[1], s[2], s[3], s[4]);
+
+        OLED_ShowString(0, 0, "==== LINE ====");
+
+        if (line_running)
+        {
+          /* 跑圈中：实时累加显示已用时间 */
+          sprintf(buf, "Time: %.1f s",
+                  (HAL_GetTick() - line_start_tick) / 1000.0f);
+          OLED_ShowString(0, 7, "4:Stop");
+        }
+        else if (last_time > 0.0f)
+        {
+          /* 跑完一圈：固定显示本圈成绩（6x8 字库无中文，用 Last 代替“本圈用时”） */
+          sprintf(buf, "Last: %.1f s", last_time);
+          OLED_ShowString(0, 7, "1:Start 4:Back");
+        }
+        else
+        {
+          sprintf(buf, "1:Start 4:Back     ");
+          OLED_ShowString(0, 7, "4:Back");
+        }
+        OLED_ShowString(0, 1, buf);
+        OLED_ShowString(0, 2, line_spaced);
+
+        printf("Sensor: %s  %s\r\n", line_spaced, line_running ? "RUN" : "STOP");
+      }
+    }
+
+    HAL_Delay(5);
+		
+  /* USER CODE END 3 */
+}
+}
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -242,6 +426,59 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 71;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 99;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+  HAL_TIM_MspPostInit(&htim3);
+
 }
 
 /**
@@ -295,7 +532,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4|GPIO_PIN_5, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4|GPIO_PIN_5, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15, GPIO_PIN_RESET);
+
+  /* PB8 蜂鸣器为低电平触发：先写高电平，确保一上电绝对不响 */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6|GPIO_PIN_7, GPIO_PIN_SET);
@@ -312,6 +555,29 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PB0 PB1 PB3 PB4
+                           PB5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_3|GPIO_PIN_4
+                          |GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PB12 PB13 PB14 PB15 电机方向控制 */
+  GPIO_InitStruct.Pin = GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PB8 蜂鸣器，单独初始化，推挽输出，默认高电平（不响） */
+  GPIO_InitStruct.Pin = GPIO_PIN_8;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);   /* 配置完再确认一次高电平 */
 
   /*Configure GPIO pins : PB6 PB7 */
   GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7;
